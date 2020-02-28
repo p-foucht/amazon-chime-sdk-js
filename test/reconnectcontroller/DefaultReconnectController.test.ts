@@ -6,8 +6,11 @@ import * as chai from 'chai';
 import FullJitterBackoff from '../../src/backoff/FullJitterBackoff';
 import DefaultReconnectController from '../../src/reconnectcontroller/DefaultReconnectController';
 import TimeoutScheduler from '../../src/scheduler/TimeoutScheduler';
+import PingPong from '../../src/pingpong/PingPong';
+import PingPongObserver from '../../src/pingpongobserver/PingPongObserver';
 
 describe('DefaultReconnectController', () => {
+  let pingPongStartCalled: boolean;
   let expect: Chai.ExpectStatic;
   let timeout: number;
   let defaultController = (): DefaultReconnectController => {
@@ -15,6 +18,9 @@ describe('DefaultReconnectController', () => {
   };
 
   beforeEach(() => {
+    pingPongStartCalled = false;
+    const controller = defaultController();
+    controller.startedConnectionAttempt(false, new TestPingPong());
     expect = chai.expect;
     timeout = 50;
   });
@@ -84,7 +90,7 @@ describe('DefaultReconnectController', () => {
 
     it('stops calling the retry func if it is past the deadline', done => {
       const controller = defaultController();
-      controller.startedConnectionAttempt(true);
+      controller.startedConnectionAttempt(true, new TestPingPong());
       expect(controller.hasStartedConnectionAttempt()).to.equal(true);
       expect(controller.isFirstConnection()).to.equal(true);
       const tryAgain = (): void => {
@@ -99,8 +105,60 @@ describe('DefaultReconnectController', () => {
       };
       tryAgain();
       new TimeoutScheduler(2 * timeout).start(() => {});
-      controller.startedConnectionAttempt(false);
+      controller.startedConnectionAttempt(false, new TestPingPong());
       expect(controller.isFirstConnection()).to.equal(false);
     });
+    it('stops calling the retry func if it is past the deadline', done => {
+          const controller = defaultController();
+          controller.startedConnectionAttempt(true, new TestPingPong());
+          expect(controller.hasStartedConnectionAttempt()).to.equal(true);
+          expect(controller.isFirstConnection()).to.equal(true);
+                  controller.didReceivePong(0, 0);
+          const tryAgain = (): void => {
+            controller.retryWithBackoff(
+              () => {},
+              () => {}
+            )
+              ? new TimeoutScheduler(10).start(() => {
+                  tryAgain();
+                })
+              : done();
+          };
+          tryAgain();
+          new TimeoutScheduler(2 * timeout).start(() => {});
+          controller.startedConnectionAttempt(false, new TestPingPong());
+          expect(controller.isFirstConnection()).to.equal(false);
+        });
   });
+
+  it('can start a PingPong', () => {
+    expect(pingPongStartCalled).to.equal(true);
+  });
+
+  it('can receive a pong', () => {
+    const controller = defaultController();
+    controller.didReceivePong(0, 0);
+    expect(pingPongStartCalled).to.equal(true);
+  });
+
+  it('reset pingPongStartCalled', () => {
+    const controller = defaultController();
+         controller.startedConnectionAttempt(true, new TestPingPong());
+         expect(controller.hasStartedConnectionAttempt()).to.equal(true);
+         expect(controller.isFirstConnection()).to.equal(true);
+        controller.didReceivePong(0, 0);
+        expect(pingPongStartCalled).to.equal(true);
+    controller.reset();
+    expect(pingPongStartCalled).to.equal(false);
+  });
+
+  class TestPingPong implements PingPong {
+      addObserver(_observer: PingPongObserver): void {}
+      removeObserver(_observer: PingPongObserver): void {}
+      forEachObserver(_observerFunc: (_observer: PingPongObserver) => void): void {}
+      start(): void {
+        pingPongStartCalled = true;
+      }
+      stop(): void {}
+    }
 });

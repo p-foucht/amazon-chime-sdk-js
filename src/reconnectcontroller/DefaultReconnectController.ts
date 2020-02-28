@@ -11,14 +11,13 @@ export default class DefaultReconnectController implements ReconnectController, 
   private shouldReconnect: boolean = true;
   private onlyRestartPeerConnection: boolean = false;
   private firstConnectionAttempted: boolean = false;
+  private pingPongStartCalled: boolean = false;
   private firstConnectionAttemptTimestamp: number = 0;
   private lastConnectionAttemptTimestamp: number = 0;
   private _isFirstConnection: boolean = true;
   private pingPong: PingPong;
   private backoffTimer: TimeoutScheduler | null = null;
   private backoffCancel: () => void = null;
-
-  private pongCount : number = 0;
 
   constructor(private reconnectTimeoutMs: number, private backoffPolicy: BackoffPolicy) {
     this.reset();
@@ -32,6 +31,9 @@ export default class DefaultReconnectController implements ReconnectController, 
   }
 
   private timeSinceLastActiveMs(): number{
+    if (!this.pingPongStartCalled) {
+        return 0;
+    }
     return Date.now() - this.lastConnectionAttemptTimestamp;
   }
 
@@ -42,29 +44,32 @@ export default class DefaultReconnectController implements ReconnectController, 
   }
 
   didReceivePong(latencyMs: number, clockSkewMs: number): void {
-      this.lastConnectionAttemptTimestamp = Date.now();
-    this.pongCount += 1;
-    console.log(this.pongCount + " &&&&&&&&&&&& " + this.lastConnectionAttemptTimestamp);
+    this.lastConnectionAttemptTimestamp = Date.now();
+    this.pingPongStartCalled = true;
   }
 
   reset(): void {
     this.cancel();
+    if (this.firstConnectionAttempted || this.pingPongStartCalled){
+      this.pingPong.removeObserver(this);
+      this.pingPong.stop();
+      this.pingPongStartCalled = false;
+    }
     this.shouldReconnect = true;
     this.onlyRestartPeerConnection = false;
     this.firstConnectionAttempted = false;
     this.firstConnectionAttemptTimestamp = 0;
-//         this.pingPong.removeObserver(this);
-//         this.pingPong.stop();
     this.backoffPolicy.reset();
   }
 
-  startedConnectionAttempt(isFirstConnection: boolean): void {
+  startedConnectionAttempt(isFirstConnection: boolean, pingPong: PingPong): void {
     this._isFirstConnection = isFirstConnection;
     if (!this.firstConnectionAttempted) {
       this.firstConnectionAttempted = true;
       this.firstConnectionAttemptTimestamp = Date.now();
-          this.pingPong.addObserver(this);
-          this.pingPong.start();
+      this.pingPong = pingPong;
+      this.pingPong.addObserver(this);
+      this.pingPong.start();
     }
   }
 
